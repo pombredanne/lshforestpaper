@@ -1,5 +1,12 @@
 \documentclass[twoside,11pt]{article}
 
+%TODO LIST BELOW
+% - scikit-learn needs to be formatted correctly, everywhere
+% - Description of the algorithm
+% - Author affiliations
+% - ???
+
+
 % Any additional packages needed should be included after jmlr2e.
 % Note that jmlr2e.sty includes epsfig, amssymb, natbib and graphicx,
 % and defines many common macros, such as 'proof' and 'example'.
@@ -17,118 +24,172 @@
 
 % Heading arguments are {volume}{year}{pages}{submitted}{published}{author-full-names}
 
-\jmlrheading{1}{2000}{1-48}{4/00}{10/00}{Marina Meil\u{a} and Michael I. Jordan}
+\jmlrheading{1}{2000}{1-48}{4/00}{10/00}{Maheshakya Wijewardena, Daniel Vainsencher and Robert Layton}
 
 % Short headings should be running head and authors last names
 
-\ShortHeadings{Learning with Mixtures of Trees}{Meil\u{a} and Jordan}
+\ShortHeadings{LSH Forest for scikit-learn}{Wijewardena, Vainsencher and Layton}
 \firstpageno{1}
 
 \begin{document}
 
-\title{Learning with Mixtures of Trees}
+\title{A Locality Sensitive Hashing Forest for scikit-learn}
 
-\author{\name Marina Meil\u{a} \email mmp@stat.washington.edu \\
+\author{\name Maheshakya Wijewardena \email mmp@stat.washington.edu \\
        \addr Department of Statistics\\
        University of Washington\\
        Seattle, WA 98195-4322, USA
        \AND
-       \name Michael I.\ Jordan \email jordan@cs.berkeley.edu \\
+       \name Daniel Vainsencher \email jordan@cs.berkeley.edu \\
        \addr Division of Computer Science and Department of Statistics\\
        University of California\\
-       Berkeley, CA 94720-1776, USA}
+       Berkeley, CA 94720-1776, USA
+       \AND Robert Layton \email r.layton@federation.edu.au \\
+       \addr Internet Commerce Security Laboratory \\
+       Federation University Australia
+       }
 
-\editor{Leslie Pack Kaelbling}
+\editor{Leslie Pack Kaelbling}  %TODO: Don't know editor
 
 \maketitle
 
 \begin{abstract}%   <- trailing '%' for backward compatibility of .sty file
-This paper describes the mixtures-of-trees model, a probabilistic 
-model for discrete multidimensional domains.  Mixtures-of-trees 
-generalize the probabilistic trees of \citet{chow:68}
-in a different and complementary direction to that of Bayesian networks.
-We present efficient algorithms for learning mixtures-of-trees 
-models in maximum likelihood and Bayesian frameworks. 
-We also discuss additional efficiencies that can be
-obtained when data are ``sparse,'' and we present data 
-structures and algorithms that exploit such sparseness.
-Experimental results demonstrate the performance of the 
-model for both density estimation and classification. 
-We also discuss the sense in which tree-based classifiers
-perform an implicit form of feature selection, and demonstrate
-a resulting insensitivity to irrelevant attributes.
+Locality Sensitive Hashing (LSH) is a method for the fast comparison of arbitrary objects.
+LSH methods use (often simple) hashing algorithms to create probabilistic models to approximate distance.
+This allows for the very efficient comparison of objects in large datasets.
+In this paper we describe an implementation of a Locality Sensitive Hashing Forest algorithm, supporting approximate nearest neighbour in the widely used scikit-learn software package.
+The implementation is cross-platform and supports the standardised interface common to most scikit-learn models.
 \end{abstract}
 
 \begin{keywords}
-  Bayesian Networks, Mixture Models, Chow-Liu Trees
+  Locality Sensitive Hashing, LSH Forest, scikit-learn
 \end{keywords}
 
 \section{Introduction}
 
-Probabilistic inference has become a core technology in AI,
-largely due to developments in graph-theoretic methods for the 
-representation and manipulation of complex probability 
-distributions~\citep{pearl:88}.  Whether in their guise as 
-directed graphs (Bayesian networks) or as undirected graphs (Markov 
-random fields), \emph{probabilistic graphical models} have a number 
-of virtues as representations of uncertainty and as inference engines.  
-Graphical models allow a separation between qualitative, structural
-aspects of uncertain knowledge and the quantitative, parametric aspects 
-of uncertainty...\\
+Even though there are several efficient exact nearest neighbor search
+algorithms known for the case when the dimension $d$ is low (eg: up to 50
+or 60), they tend to suffer from either space or query time that is exponential
+in $`d$.
+For large enough $d$, in practice they often provide only a little improvement over the linear time `brute force' algorithm that
+compares a query point to each point from the database.
+This phenomenon is often called `The Curse of Dimensionality'.
+When answers do not have to be exact, various algorithms can provide an approximate nearest
+neighbor search which is useful in high dimensional problems.
 
-{\noindent \em Remainder omitted in this sample. See http://www.jmlr.org/papers/ for full paper.}
+Approximate nearest neighbor search attempts to overcome the bottleneck
+of query running time \citep{andoni2006near}. In certain applications which involve
+high dimensional data, it may be acceptable to retrieve a `good guess' for
+nearest neighbors. This is also appropriate where it is not as important to
+identify the neighbors themselves so much as to characterize the neighborhood,
+as in k-nearest neighbors classification and regression.
+In such cases, an algorithm which does not guarantee to
+return the actual nearest neighbors can be used, in return for improved speed.
+Methods for approximate nearest neighbor search include locality
+sensitive hashing (LSH), best bin fit and balanced box-decomposition tree based
+search.
+
+Locality sensitive hashing and its variants have been successfully
+applied to many computational problems in many areas. The key idea of LSH is to
+hash the data points using several hash functions to ensure that for each
+function, the probability of collision is much higher for the objects that are
+close to each other than those that are far apart. Following are the
+requirements for a hash function family to be locality sensitive.
+
+A family $H$ of functions from a domain $S$ to a range $U$
+is called $(r, e , p1 , p2 )$-sensitive, with $r, e > 0$,
+$p_1 > p_2 > 0$, if for any $p, q ∈ S$, the following conditions
+hold ($D$ is the distance function):
+
+* If $D(p,q) <= r$ then $P_H[h(p) = h(q)] >= p_1$,
+* If $D(p,q) > r(1 + e)$ then $P_H[h(p) = h(q)] <= p_2$.
+
+The definition states that \textit{nearby} points within a distance $r$ of
+each other are likely to collide (with probability $p_1$), while 
+\textit{distant} points more than $r(1 + e)$ apart have only a smaller
+probability ($p_2$) of colliding. Assuming that there is some family
+of LSH functions $H$ available, LSH index is built as follows:
+
+1. Choose $k$ functions $h_1, h_2, … h_k$ uniformly at
+   random (with replacement) from $H$. For any $p ∈ S$, place
+   $p$ in the bucket with label
+   $g(p) = (h_1(p), h_2(p), … h_k(p))$. Observe that if
+   each $h_i$ outputs one `digit', each bucket has a k-digit label.
+
+2. Independently perform step 1 $l$ times to construct $l$
+   separate estimators, with hash functions $g_1, g_2, … g_l$.
+
+In step 1, if two distant points had a probability $p_2$ of
+collision with one hash function, their collision probability drops to
+just $p_2^k$ with the concatenation, which becomes
+negligibly small for large $k$. However, a larger value of $k$
+has the side-effect of lowering the chances of even nearby points colliding.
+Therefore, to ensure enough `good' collisions occur, step 2 constructs
+multiple estimators.
+
+
+\section{Locality Sensitive Hashing Forest}
+
+LSHForest was implemented for the scikit-learn package as part of the 2014 Google Summer of Code.
+Logically, a tree in the LSH
+forest is a prefix tree, with each leaf corresponding to a point in the data
+base \citep{bawa2005lsh}. This data structure simply consists of $l$ such LSH trees, each
+constructed with an independently drawn random sequence of hash functions from
+$H$. This collection of $l$ trees is the LSH Forest. In our
+implementation, the length of the sequence of hash functions is kept fixed at
+32. Moreover, a prefix tree is implemented using sorted arrays and binary 
+search.
+
+A query for the $m$ nearest neighbors of a point $q$ is answered by
+traversing the LSH trees in two phases. In the first top-down phase, each LSH
+Tree is descended (by binary search) to find the leaf having the largest prefix
+match (maximum depth) with $q$'s label after subjecting $q$ to the
+same hashing functions.  In the second bottom-up phase, $M >> m$ points
+(total candidates) are extracted from the LSH Forest, moving up from maximum
+depth towards the root synchronously across all LSH trees. $M$ is set to
+$cl$ where $c$, the number of candidates extracted from each tree,
+is constant.
+Finally , similarity of all $M$ points to point
+$q$ are calculated and top $m$ points are returned as the nearest
+neighbors of $q$. Since much of the time is spent calculating the
+distances to candidates, the speedup compared to brute force search is
+approximately $N/M$ where $N$ is the number of points in database.
+
+The query time depends mainly on the parameters $l$ and $c$
+(\texttt{n\_estimators} and \texttt{n\_candidates} in our implementation). The behaviour of
+query time while varying these parameters are as follows.
+%
+%.. figure:: ../auto_examples/neighbors/images/plot_approximate_nearest_neighbors_001.png
+%   :target: ../auto_examples/neighbors/plot_approximate_nearest_neighbors.html
+%   :align: center
+%   :scale: 75
+%
+%.. figure:: ../auto_examples/neighbors/images/plot_approximate_nearest_neighbors_002.png
+%   :target: ../auto_examples/neighbors/plot_approximate_nearest_neighbors.html
+%   :align: center
+%   :scale: 75
+
+
+
+
+
 
 % Acknowledgements should go at the end, before appendices and references
 
-\acks{We would like to acknowledge support for this project
-from the National Science Foundation (NSF grant IIS-9988642)
-and the Multidisciplinary Research Program of the Department
-of Defense (MURI N00014-00-1-0637). }
+\acks{
+This project was conducted through the support of the Google Summer of Code (GSoC) 2014.
+We appreciate the support of Google in assisting the open source community.
+We also appreciate the support of the Python Software Foundation in organising scikit-learn's GSoC applications, and the scikit-learn contributors for their support, reviews and organisation.
+
+Dr Layton is supported by the Internet Commerce Security Laboratory (ICSL), a joint venture between Federation University Australia, Westpac and IBM.}
 
 % Manual newpage inserted to improve layout of sample file - not
 % needed in general before appendices/bibliography.
 
 \newpage
 
-\appendix
-\section*{Appendix A.}
-\label{app:theorem}
-
-% Note: in this sample, the section number is hard-coded in. Following
-% proper LaTeX conventions, it should properly be coded as a reference:
-
-%In this appendix we prove the following theorem from
-%Section~\ref{sec:textree-generalization}:
-
-In this appendix we prove the following theorem from
-Section~6.2:
-
-\noindent
-{\bf Theorem} {\it Let $u,v,w$ be discrete variables such that $v, w$ do
-not co-occur with $u$ (i.e., $u\neq0\;\Rightarrow \;v=w=0$ in a given
-dataset $\dataset$). Let $N_{v0},N_{w0}$ be the number of data points for
-which $v=0, w=0$ respectively, and let $I_{uv},I_{uw}$ be the
-respective empirical mutual information values based on the sample
-$\dataset$. Then
-\[
-	N_{v0} \;>\; N_{w0}\;\;\Rightarrow\;\;I_{uv} \;\leq\;I_{uw}
-\]
-with equality only if $u$ is identically 0.} \hfill\BlackBox
-
-\noindent
-{\bf Proof}. We use the notation:
-\[
-P_v(i) \;=\;\frac{N_v^i}{N},\;\;\;i \neq 0;\;\;\;
-P_{v0}\;\equiv\;P_v(0)\; = \;1 - \sum_{i\neq 0}P_v(i).
-\]
-These values represent the (empirical) probabilities of $v$
-taking value $i\neq 0$ and 0 respectively.  Entropies will be denoted
-by $H$. We aim to show that $\fracpartial{I_{uv}}{P_{v0}} < 0$....\\
-
-{\noindent \em Remainder omitted in this sample. See http://www.jmlr.org/papers/ for full paper.}
-
 
 \vskip 0.2in
-\bibliography{sample}
+\bibliography{references}
 
 \end{document}
